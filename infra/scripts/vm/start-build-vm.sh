@@ -10,10 +10,11 @@
 #   VM. This is the Helios analog of the kernel env's BUILD_PROFILE/KBUILDDIR
 #   (there a profile names a build *dir*; here a whole *VM*).
 #
-#     ./start-build-vm.sh             # profile 'dev'   -> VM helios-dev
-#     ./start-build-vm.sh test        # profile 'test'  -> VM helios-test
+#     ./start-build-vm.sh                 # profile 'dev'  -> VM helios-dev
+#     ./start-build-vm.sh test            # profile 'test' -> VM helios-test
 #     OXIDE_VM_PROFILE=exp ./start-build-vm.sh
-#     ./start-build-vm.sh --list      # list existing helios-* VMs
+#     ./start-build-vm.sh --list          # list existing helios-* VMs
+#     ./start-build-vm.sh --set-ram dev [GB]   # resize an existing VM's RAM
 #
 #   If the VM for a profile already exists, it is BOOTED (and you attach to
 #   its console), never recreated -- recreating would wipe its disk and lose
@@ -42,7 +43,80 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../config.sh"
 
 usage() {
-    sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^#\{0,1\} \{0,1\}//'
+    sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^#\{0,1\} \{0,1\}//'
+}
+
+# Available host RAM in whole GB (kernel's no-swap estimate).
+host_avail_gb() { awk '/^MemAvailable:/{print int($2/1024/1024)}' /proc/meminfo; }
+
+# Echo the dynamically chosen guest RAM (GB) to stdout; a human-readable
+# explanation and any error go to stderr. Returns 1 if below the floor.
+compute_mem_gb() {
+    local avail m
+    avail=$(host_avail_gb)
+    m=$(( avail - HOST_RESERVE_GB ))
+    [ "$m" -gt "$MAX_GB" ] && m=$MAX_GB
+    if [ "$m" -lt "$MIN_GB" ]; then
+        echo "ERROR: only ${avail} GB available; after the ${HOST_RESERVE_GB} GB host" >&2
+        echo "reserve, the guest would get < the ${MIN_GB} GB build floor." >&2
+        echo "Free RAM (close VMs/tabs, 'sudo systemctl stop ollama', etc) and retry." >&2
+        return 1
+    fi
+    echo "guest RAM: ${m} GB  (= ${avail} avail - ${HOST_RESERVE_GB} reserve, clamped to [${MIN_GB},${MAX_GB}])" >&2
+    echo "$m"
+}
+
+# Resize an existing profile VM's RAM in place. libvirt requires the domain
+# shut off to change max memory (the engvm domain has no hotplug slots), so
+# we shut it down gracefully first, then set maxmem+mem persistently.
+do_set_ram() {
+    local prof="$1" want="$2" vm gb kib state waited cfg
+    [ -n "$prof" ] || { echo "usage: $0 --set-ram <profile> [GB]" >&2; exit 2; }
+    vm="helios-$prof"
+    if ! virsh domstate "$vm" >/dev/null 2>&1; then
+        echo "no such VM: $vm  (create it first: $0 $prof)" >&2
+        exit 1
+    fi
+
+    if [ -n "$want" ]; then
+        gb="$want"
+        local avail headroom; avail=$(host_avail_gb); headroom=$(( avail - HOST_RESERVE_GB ))
+        if [ "$gb" -gt "$headroom" ]; then
+            echo "warning: ${gb} GB exceeds current headroom (~${headroom} GB); host may swap." >&2
+        fi
+    else
+        gb=$(compute_mem_gb) || exit 1
+    fi
+    kib=$(( gb * 1024 * 1024 ))
+
+    state=$(virsh domstate "$vm" 2>/dev/null || echo unknown)
+    if [ "$state" = "running" ]; then
+        echo "$vm is running; changing max memory needs it shut off."
+        echo "Sending graceful ACPI shutdown (save your work)..."
+        virsh shutdown "$vm" >/dev/null 2>&1 || true
+        waited=0
+        while [ "$state" != "shut off" ] && [ "$waited" -lt 120 ]; do
+            sleep 3; waited=$(( waited + 3 ))
+            state=$(virsh domstate "$vm" 2>/dev/null || echo unknown)
+        done
+        if [ "$state" != "shut off" ]; then
+            echo "ERROR: $vm did not shut down within ${waited}s (state: $state)." >&2
+            echo "Force off with 'virsh destroy $vm' once safe, then re-run." >&2
+            exit 1
+        fi
+        echo "$vm is shut off."
+    fi
+
+    echo "Setting $vm RAM -> ${gb} GB (persistent config) ..."
+    virsh setmaxmem "$vm" "$kib" --config
+    virsh setmem    "$vm" "$kib" --config
+
+    # Keep the generated profile config in sync, so a future recreate matches.
+    cfg="$ENGVM_DIR/config/${prof}.sh"
+    [ -f "$cfg" ] && sed -i "s|^MEM=.*|MEM=\$(( $gb * 1024 * 1024 ))|" "$cfg"
+
+    echo "Done. Boot it with: $0 $prof"
+    exit 0
 }
 
 # --- Argument handling: option or profile name ------------------------
@@ -52,6 +126,7 @@ case "${1:-}" in
         echo "Helios build VMs (libvirt domains named helios-*):"
         virsh list --all 2>/dev/null | awk 'NR<=2 || /helios-/'
         exit 0 ;;
+    -r|--set-ram) shift; do_set_ram "$@" ;;   # exits internally
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
 esac
 
@@ -83,39 +158,25 @@ fi
 
 echo "Creating new build VM '$VMNAME' (profile '$PROFILE')."
 
-# Inherit INPUT_IMAGE/POOL so preflight checks match create.sh.
-. "$ENGVM_DIR/config/defaults.sh"
+# Read ONLY the seed-image name from defaults.sh, in a subshell so its
+# VCPU/SIZE/MEM assignments cannot clobber our knobs above.
+INPUT_IMAGE=$( . "$ENGVM_DIR/config/defaults.sh" >/dev/null 2>&1; printf '%s' "${INPUT_IMAGE:-}" )
 
-# --- 1. Assess host memory --------------------------------------------
-avail_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-total_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
-avail_gb=$(( avail_kb / 1024 / 1024 ))
-total_gb=$(( total_kb / 1024 / 1024 ))
-echo "Host memory: ${total_gb} GB total, ${avail_gb} GB available now."
-
-# --- 2. Report memory-heavy processes (informational only) ------------
+# --- 1. Report host memory + heavy processes --------------------------
+echo "Host memory: $(awk '/^MemTotal:/{print int($2/1024/1024)}' /proc/meminfo) GB total, $(host_avail_gb) GB available now."
 echo "Memory-heavy processes competing with the build VM:"
 ps -eo rss,pid,comm --sort=-rss 2>/dev/null | awk '
     NR>1 && ($3 ~ /qemu/ || $3 ~ /ollama/ || $3 ~ /boinc/) {
         printf "  %-18s pid %-7s %6.1f GB\n", $3, $2, $1/1024/1024
     }' || true
 echo "  (free these and re-run if you want the guest to get more RAM)"
-
-# --- 3. Compute guest RAM ---------------------------------------------
-mem_gb=$(( avail_gb - HOST_RESERVE_GB ))
-[ "$mem_gb" -gt "$MAX_GB" ] && mem_gb=$MAX_GB
-if [ "$mem_gb" -lt "$MIN_GB" ]; then
-    echo >&2
-    echo "ERROR: only ${avail_gb} GB available; after the ${HOST_RESERVE_GB} GB host" >&2
-    echo "reserve, the guest would get < the ${MIN_GB} GB build floor." >&2
-    echo "Free RAM (close VMs/tabs, 'sudo systemctl stop ollama', etc) and retry." >&2
-    exit 1
-fi
 echo
-echo "==> guest RAM: ${mem_gb} GB  (= ${avail_gb} avail - ${HOST_RESERVE_GB} reserve, clamped to [${MIN_GB},${MAX_GB}])"
+
+# --- 2. Compute guest RAM ---------------------------------------------
+mem_gb=$(compute_mem_gb) || exit 1
 echo "==> vCPU: ${VCPU}   disk ceiling: ${SIZE} (thin qcow2)"
 
-# --- 4. Preflight: seed image + libvirt network -----------------------
+# --- 3. Preflight: seed image + libvirt network -----------------------
 if [ ! -f "$ENGVM_DIR/input/$INPUT_IMAGE" ]; then
     echo
     echo "Seed image $INPUT_IMAGE not found -- downloading via engvm download.sh ..."
@@ -127,7 +188,7 @@ if ! virsh net-info default 2>/dev/null | grep -q 'Active:.*yes'; then
     virsh net-start default || true
 fi
 
-# --- 5. Write the generated config delta and launch -------------------
+# --- 4. Write the generated config delta and launch -------------------
 cfg="$ENGVM_DIR/config/${CONFIG_NAME}.sh"
 
 # Ensure the generated config is git-excluded in the upstream-mirror clone

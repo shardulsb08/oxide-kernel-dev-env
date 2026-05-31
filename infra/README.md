@@ -58,6 +58,18 @@ $ infra/scripts/vm/start-build-vm.sh --list      # list existing helios-* VMs
   rebuild from the seed image:
   `(cd $ENGVM_DIR && ./destroy.sh <profile>) && start-build-vm.sh <profile>`.
 
+### Resizing an existing VM's RAM
+
+```
+$ infra/scripts/vm/start-build-vm.sh --set-ram dev        # re-size from live host RAM
+$ infra/scripts/vm/start-build-vm.sh --set-ram dev 14     # set explicitly to 14 GB
+```
+
+libvirt requires the domain shut off to change max memory (the engvm
+domain has no hotplug slots), so this gracefully shuts the VM down, sets
+`maxmem`+`mem` persistently, and syncs the profile's generated config.
+Boot it again afterward with `start-build-vm.sh <profile>`.
+
 ### Knobs (env-overridable per run)
 
 `MIN_GB`, `MAX_GB`, `HOST_RESERVE_GB`, `VCPU`, `SIZE` default at the top
