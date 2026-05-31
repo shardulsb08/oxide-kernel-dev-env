@@ -244,7 +244,10 @@ ensure_vm_keys() {
         kb=$(awk '{print $2}' <<<"$line")
         grep -qF "$kb" "$akf" 2>/dev/null || { printf '%s\n' "$line" >> "$akf"; added=1; }
     done <<< "$hostkeys"
-    [ "$added" = 1 ] && echo "Provisioned the VM's authorized_keys with this host's SSH key(s)."
+    if [ "$added" = 1 ]; then
+        echo "Provisioned the VM's authorized_keys with this host's SSH key(s)."
+    fi
+    return 0   # never let a "nothing to add" result (added=0) trip set -e
 }
 
 # --- Argument handling -------------------------------------------------
