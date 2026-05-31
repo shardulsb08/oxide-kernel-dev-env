@@ -25,10 +25,12 @@ infra/
     vm/
       start-build-vm.sh     create/boot the build VM (RAM sizing, data disk, provisioning)
       build-helios.sh       build illumos in a running VM (host wrapper; streams + logs)
+      boot-with-log.sh      cold-start a VM with serial console attached + captured (boot debugging)
       guest/
         setup-data-pool.sh  runs IN the guest: import/create the ZFS data pool
         build-helios.sh     runs IN the guest: deps + clone + gmake setup + gmake illumos
   build-logs/               host-side build logs (gitignored)
+  serial-logs/              timestamped serial-console boot logs (gitignored)
 ```
 
 ## config.sh

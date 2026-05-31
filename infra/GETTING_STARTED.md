@@ -151,10 +151,23 @@ pfexec reboot                          # boots the new BE; you're running your k
 ```
 
 After reboot, reconnect and check `uname -v` (should no longer be the seed
-`helios-3.0.23976`), then `dmesg | grep ...`. If the new BE won't
-boot/network, recover by selecting the previous BE at the loader
-(`virsh console helios-dev`), or destroy + recreate the VM (your work on
-`/data` survives).
+`helios-3.0.23976`), then `dmesg | grep ...`.
+
+**To debug a boot** (e.g. a new BE that won't come up): the normal start is
+headless, so use the logged cold-boot helper instead -- it attaches the
+serial console from power-on and captures the whole boot to a timestamped
+file:
+
+```bash
+# in the guest, after onu: pfexec poweroff      (clean shutdown, not reboot)
+infra/scripts/vm/boot-with-log.sh dev            # cold-start with console + log
+#   watch the loader/kernel live; Ctrl+] to detach once up.
+#   full boot saved to infra/serial-logs/helios-dev-<timestamp>.log
+```
+
+If the new BE won't boot/network, recover by selecting the previous BE at
+the loader, or destroy + recreate the VM (your work on `/data` survives;
+`zpool import -f data` reattaches it).
 
 (`./helios-build onu --help` for options; the Helios README "Making
 changes" has the full walkthrough.)
