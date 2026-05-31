@@ -70,6 +70,17 @@ domain has no hotplug slots), so this gracefully shuts the VM down, sets
 `maxmem`+`mem` persistently, and syncs the profile's generated config.
 Boot it again afterward with `start-build-vm.sh <profile>`.
 
+### SSH access
+
+engvm's `create.sh` seeds the guest from your host's
+`~/.ssh/authorized_keys`, which often lists keys from *other* machines
+(whose private halves aren't on this host). The launcher therefore
+appends this host's agent identities (`ssh-add -L`, falling back to
+`~/.ssh/*.pub`) to the provisioning file, so a key you actually hold is
+accepted and `ssh <user>@<vm-ip>` just works. If your agent is empty,
+load it (`ssh-add`) before creating, or use `virsh console <vm>` (the dev
+image has an empty root password).
+
 ### Knobs (env-overridable per run)
 
 `MIN_GB`, `MAX_GB`, `HOST_RESERVE_GB`, `VCPU`, `SIZE` default at the top

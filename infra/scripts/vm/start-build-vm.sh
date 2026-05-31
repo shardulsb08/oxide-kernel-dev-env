@@ -119,6 +119,29 @@ do_set_ram() {
     exit 0
 }
 
+# Ensure the VM will accept an SSH key THIS host actually holds. engvm's
+# create.sh seeds the guest from $HOME/.ssh/authorized_keys, which often
+# lists keys from other machines (whose private halves aren't here) -- so
+# append this host's agent identities (or ~/.ssh/*.pub) to the provisioning
+# file create.sh reads. Idempotent; only adds keys not already present.
+ensure_vm_keys() {
+    local akf="$ENGVM_DIR/input/cpio/authorized_keys" hostkeys added=0 kb line
+    hostkeys=$(ssh-add -L 2>/dev/null)
+    [ -n "$hostkeys" ] || hostkeys=$(cat ~/.ssh/*.pub 2>/dev/null)
+    if [ -z "$hostkeys" ]; then
+        echo "warning: no usable host SSH keys (empty agent and no ~/.ssh/*.pub);" >&2
+        echo "the VM may be reachable only via 'virsh console $VMNAME'." >&2
+        return 0
+    fi
+    mkdir -p "$(dirname "$akf")"; touch "$akf"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        kb=$(awk '{print $2}' <<<"$line")
+        grep -qF "$kb" "$akf" 2>/dev/null || { printf '%s\n' "$line" >> "$akf"; added=1; }
+    done <<< "$hostkeys"
+    [ "$added" = 1 ] && echo "Provisioned the VM's authorized_keys with this host's SSH key(s)."
+}
+
 # --- Argument handling: option or profile name ------------------------
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
@@ -216,6 +239,9 @@ MEM=\$(( $mem_gb * 1024 * 1024 ))
 SIZE=$SIZE
 EOF
 echo "Wrote $cfg (VM=$VMNAME, MEM=${mem_gb} GB, VCPU=${VCPU}, SIZE=${SIZE})"
+
+# Make sure the new VM accepts a key this host can authenticate with.
+ensure_vm_keys
 echo
 
 exec "$ENGVM_DIR/create.sh" "$CONFIG_NAME"
