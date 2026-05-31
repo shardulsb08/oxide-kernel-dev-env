@@ -44,17 +44,18 @@ one VM at a time may use the shared data pool.
 ## 3. Find and connect to the VM
 
 ```bash
-./ssh_connect.sh                # SSH into helios-dev (run in any terminal)
+./ssh_connect.sh                # SSH into helios-dev (default profile; any terminal)
 ./ssh_connect.sh dev 3          # open 3 terminals, each SSH'd in
 ./ssh_connect.sh test           # SSH into the 'test' profile's VM
 ```
 
-`ssh_connect.sh` resolves the VM's leased IP for you. Equivalent built-ins:
+`ssh_connect.sh` resolves the VM's leased IP for you. Equivalent built-ins
+(profile defaults to `dev`):
 
 ```bash
-infra/scripts/vm/start-build-vm.sh --ssh dev      # SSH straight in
-infra/scripts/vm/start-build-vm.sh --ip  dev      # just print the IP
-infra/scripts/vm/start-build-vm.sh --console dev  # serial console (Ctrl+] to detach)
+infra/scripts/vm/start-build-vm.sh --ssh        # SSH straight in
+infra/scripts/vm/start-build-vm.sh --ip         # just print the IP
+infra/scripts/vm/start-build-vm.sh --console    # serial console (Ctrl+] to detach)
 ```
 
 ## 4. The persistent data disk
@@ -76,10 +77,10 @@ Opt out of the automatic disk/pool: `DATA_DISK=0` or `PROVISION_GUEST=0`.
 
 ## 5. Build illumos (Phase 1)
 
-One command from the host builds it inside the guest:
+One command from the host builds it inside the guest (profile defaults to `dev`):
 
 ```bash
-infra/scripts/vm/build-helios.sh dev
+infra/scripts/vm/build-helios.sh
 ```
 
 It SSHes into `helios-dev` and runs `guest/build-helios.sh`, which:
@@ -105,24 +106,47 @@ cd /data/helios/helios && gmake illumos      # or run build-helios.sh's steps
 
 ## 6. The kernel edit -> build -> test loop (Phase 1+)
 
-For actual kernel changes, iterate inside the guest with the quick build
-environment (much faster than a full build):
+The illumos source lives in the guest at
+`/data/helios/helios/projects/illumos/usr/src` (= `$SRC` inside bldenv):
+
+| Path | What |
+|------|------|
+| `uts/common/`  | architecture-independent kernel (drivers in `io/`, filesystems in `fs/`, networking in `inet/`, dtrace, ...) |
+| `uts/intel/`   | x86 ISA-common (e.g. `genunix`) |
+| `uts/i86pc/`   | **the standard PC platform -- what this QEMU VM runs** (`unix`, platform code) |
+| `uts/oxide/`   | the Oxide rack platform (real hardware) |
+| `cmd/`, `lib/` | userland commands and libraries |
+
+Iterate with the quick build environment (rebuilds only what changed --
+far faster than a full build):
 
 ```bash
+./ssh_connect.sh                       # into the guest
 cd /data/helios/helios
-gmake bldenv                                  # interactive quick build env (dmake)
-# inside bldenv:
-cd projects/illumos/usr/src/uts/<component>   # e.g. a kernel module/driver
-dmake -S -m serial install                    # build + stage to the proto area
-cd $SRC/pkg && dmake install                  # regenerate packages
+./helios-build bldenv -q               # interactive build shell; drops you in $SRC
+
+# inside bldenv (pwd is .../usr/src):
+cd uts/i86pc/os                        # edit a kernel source file here, say
+dmake -S -m serial install             # build + stage into the proto area
+# or rebuild the whole kernel: cd uts && dmake install
 ```
 
-Then apply the freshly built packages to the running guest and reboot to
-test (see the Helios README "Making changes" for `helios-build onu`
-specifics). Commit your illumos-gate work under
-`projects/illumos` and **push to your GitHub fork** -- that's the durable
-record (the VM and even the data disk are replaceable; published commits
-aren't).
+Test the change on the running guest:
+
+```bash
+# still in the helios repo (outside bldenv):
+./helios-build onu -t my-change        # build a new boot environment from your packages
+pfexec beadm activate my-change        # (if not auto-activated)
+pfexec reboot                          # boot into it; you're now running your kernel
+```
+
+(`./helios-build onu --help` for options; the Helios README "Making
+changes" has the full walkthrough.)
+
+Preserve your work: commit under `projects/illumos` and **push to your
+GitHub fork of illumos-gate**. The VM and even the data disk are
+replaceable; published commits are the durable record -- and a clean,
+reviewable commit/PR is the actual deliverable for the hiring goal.
 
 ## Other operations
 

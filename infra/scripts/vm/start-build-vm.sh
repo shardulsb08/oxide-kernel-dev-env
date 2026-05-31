@@ -5,14 +5,16 @@
 # default) provisioning the guest's ZFS data pool. Wraps helios-engvm's
 # create.sh. Lives in the tracked workspace-root repo (infra/), not the clone.
 #
-#   start-build-vm.sh [profile]          create or boot VM helios-<profile> (default 'dev')
+#   start-build-vm.sh [profile]          create or boot VM helios-<profile>
 #   start-build-vm.sh --list             list existing helios-* VMs
-#   start-build-vm.sh --ssh <profile>    SSH into the VM (resolves its IP)
-#   start-build-vm.sh --console <profile> attach the serial console (Ctrl+] to detach)
-#   start-build-vm.sh --ip  <profile>    print the VM's IP
-#   start-build-vm.sh --set-ram <p> [GB] resize an existing VM's RAM (shuts it down)
-#   start-build-vm.sh --ensure-data <p> [SIZE]   (just) create+attach the data disk
+#   start-build-vm.sh --ssh [profile]    SSH into the VM (resolves its IP)
+#   start-build-vm.sh --console [profile] attach the serial console (Ctrl+] to detach)
+#   start-build-vm.sh --ip  [profile]    print the VM's IP
+#   start-build-vm.sh --set-ram [profile] [GB]   resize an existing VM's RAM (shuts it down)
+#   start-build-vm.sh --ensure-data [profile] [SIZE]   (just) create+attach the data disk
 #   start-build-vm.sh --help
+#
+#   profile defaults to 'dev' everywhere (override with $OXIDE_VM_PROFILE).
 #
 # Profiles name independent VMs (helios-<profile>) + disks, so several build
 # images can coexist (one at a time may use the shared data pool). Re-running
@@ -257,15 +259,13 @@ case "${1:-}" in
         echo "Helios build VMs (libvirt domains named helios-*):"
         virsh list --all 2>/dev/null | awk 'NR<=2 || /helios-/'
         exit 0 ;;
-    --ip)  shift; [ -n "${1:-}" ] || { echo "usage: $0 --ip <profile>" >&2; exit 2; }
-           get_ip "helios-$1"; exit 0 ;;
-    --ssh) shift; [ -n "${1:-}" ] || { echo "usage: $0 --ssh <profile>" >&2; exit 2; }
-           ip=$(get_ip "helios-$1"); [ -n "$ip" ] || { echo "no IP for helios-$1 (is it running?)" >&2; exit 1; }
+    --ip)  shift; get_ip "helios-${1:-$DEFAULT_PROFILE}"; exit 0 ;;
+    --ssh) shift; p="${1:-$DEFAULT_PROFILE}"
+           ip=$(get_ip "helios-$p"); [ -n "$ip" ] || { echo "no IP for helios-$p (is it running?)" >&2; exit 1; }
            exec ssh -o StrictHostKeyChecking=accept-new "$GUEST_USER@$ip" ;;
-    --console) shift; [ -n "${1:-}" ] || { echo "usage: $0 --console <profile>" >&2; exit 2; }
-           exec virsh console "helios-$1" ;;
-    -r|--set-ram)  shift; do_set_ram "$@" ;;       # exits internally
-    --ensure-data) shift; do_ensure_data "$@" ;;   # exits internally
+    --console) shift; exec virsh console "helios-${1:-$DEFAULT_PROFILE}" ;;
+    -r|--set-ram)  shift; do_set_ram "${1:-$DEFAULT_PROFILE}" "${2:-}" ;;     # exits internally
+    --ensure-data) shift; do_ensure_data "${1:-$DEFAULT_PROFILE}" "${2:-}" ;; # exits internally
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
 esac
 
