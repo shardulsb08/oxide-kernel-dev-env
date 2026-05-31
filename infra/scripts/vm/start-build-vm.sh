@@ -1,43 +1,63 @@
 #!/bin/bash
 #
-# start-build-vm.sh -- size and launch the Helios build VM, choosing guest
+# start-build-vm.sh -- create or boot a named Helios build VM, sizing guest
 # RAM from live host memory so a long illumos build doesn't starve the
 # desktop. Wraps helios-engvm's create.sh.
 #
+# PROFILES (multiple build images)
+#   A "profile" names an independent VM + disk, so you can keep several
+#   build images side by side -- e.g. a stable dev VM and a throwaway test
+#   VM. This is the Helios analog of the kernel env's BUILD_PROFILE/KBUILDDIR
+#   (there a profile names a build *dir*; here a whole *VM*).
+#
+#     ./start-build-vm.sh             # profile 'dev'   -> VM helios-dev
+#     ./start-build-vm.sh test        # profile 'test'  -> VM helios-test
+#     OXIDE_VM_PROFILE=exp ./start-build-vm.sh
+#     ./start-build-vm.sh --list      # list existing helios-* VMs
+#
+#   If the VM for a profile already exists, it is BOOTED (and you attach to
+#   its console), never recreated -- recreating would wipe its disk and lose
+#   the build inside. To rebuild from the seed image:
+#       (cd $ENGVM_DIR && ./destroy.sh <profile>) && ./start-build-vm.sh <profile>
+#
 # Lives in the tracked workspace-root repo (infra/), NOT in the upstream
-# helios-engvm clone. It drives create.sh in the clone via $ENGVM_DIR and
-# writes one generated config there ($ENGVM_DIR/config/build.sh, which is
-# git-excluded in that clone).
+# helios-engvm clone. Drives create.sh via $ENGVM_DIR.
 #
-# What it does:
-#   1. Reads /proc/meminfo MemAvailable (kernel's estimate of allocatable
-#      RAM without swapping -- already accounts for other running VMs and
-#      reclaimable cache).
-#   2. guest_RAM = clamp(MemAvailable - HOST_RESERVE_GB, MIN_GB, MAX_GB).
-#      Under a normal desktop this lands ~12 GB; drops when busy, rises
-#      (capped) when roomy.
-#   3. Reports memory-heavy processes (other QEMU, ollama, boinc) so you
-#      can free them first -- it does NOT kill anything.
-#   4. Ensures the seed image + libvirt 'default' network are present.
-#   5. Writes $ENGVM_DIR/config/build.sh (VCPU/MEM/SIZE deltas, layered by
-#      create.sh over config/defaults.sh) and runs create.sh build.
-#
-# Tune the knobs below to taste.
+# Knobs are env-overridable per run, e.g.:
+#     VCPU=8 SIZE=100G HOST_RESERVE_GB=12 ./start-build-vm.sh test
 
 set -o pipefail
 set -o errexit
 
-# --- Tunable knobs -----------------------------------------------------
-MIN_GB=8            # illumos build floor -- never give the guest less
-MAX_GB=16           # host protection -- never give the guest more
-HOST_RESERVE_GB=8   # RAM kept free for your desktop to grow into
-VCPU=12             # 32 threads on this host; build parallelism = 2 + NCPUS
-SIZE=200G           # qcow2 VIRTUAL ceiling (thin -- grows on demand)
-CONFIG_NAME=build   # writes config/build.sh, passes 'build' to create.sh
-# -----------------------------------------------------------------------
+# --- Tunable knobs (env-overridable) ----------------------------------
+MIN_GB="${MIN_GB:-8}"               # illumos build floor -- never less
+MAX_GB="${MAX_GB:-16}"              # host protection -- never more
+HOST_RESERVE_GB="${HOST_RESERVE_GB:-8}"  # RAM left free for the desktop
+VCPU="${VCPU:-12}"                  # 32 threads here; build jobs = 2 + NCPUS
+SIZE="${SIZE:-200G}"               # qcow2 VIRTUAL ceiling (thin, grows on demand)
+DEFAULT_PROFILE="${OXIDE_VM_PROFILE:-dev}"
+# ----------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../config.sh"
+
+usage() {
+    sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^#\{0,1\} \{0,1\}//'
+}
+
+# --- Argument handling: option or profile name ------------------------
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    -l|--list)
+        echo "Helios build VMs (libvirt domains named helios-*):"
+        virsh list --all 2>/dev/null | awk 'NR<=2 || /helios-/'
+        exit 0 ;;
+    -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+esac
+
+PROFILE="${1:-$DEFAULT_PROFILE}"
+VMNAME="helios-${PROFILE}"
+CONFIG_NAME="$PROFILE"
 
 if [ ! -x "$ENGVM_DIR/create.sh" ]; then
     echo "ERROR: helios-engvm clone not found at $ENGVM_DIR" >&2
@@ -45,7 +65,25 @@ if [ ! -x "$ENGVM_DIR/create.sh" ]; then
     exit 1
 fi
 
-# Inherit VM/POOL/INPUT_IMAGE so our preflight checks match create.sh.
+# --- If the VM already exists, boot it -- never recreate (would wipe it) ---
+if virsh domstate "$VMNAME" >/dev/null 2>&1; then
+    state=$(virsh domstate "$VMNAME" 2>/dev/null || echo unknown)
+    echo "VM '$VMNAME' already exists (state: $state)."
+    echo "Booting/attaching it -- NOT recreating (recreate would wipe its disk)."
+    echo "To rebuild from the seed image instead:"
+    echo "    (cd \"$ENGVM_DIR\" && ./destroy.sh \"$PROFILE\") && \"$0\" \"$PROFILE\""
+    echo
+    if [ "$state" = "running" ]; then
+        echo "Attaching console (Ctrl+] to detach)."
+        exec virsh console "$VMNAME"
+    else
+        exec virsh start --console "$VMNAME"
+    fi
+fi
+
+echo "Creating new build VM '$VMNAME' (profile '$PROFILE')."
+
+# Inherit INPUT_IMAGE/POOL so preflight checks match create.sh.
 . "$ENGVM_DIR/config/defaults.sh"
 
 # --- 1. Assess host memory --------------------------------------------
@@ -108,14 +146,15 @@ fi
 
 cat > "$cfg" <<EOF
 #
-# GENERATED by infra/scripts/vm/start-build-vm.sh -- do not hand-edit;
-# tune the knobs in that script instead. Layered over config/defaults.sh.
+# GENERATED by infra/scripts/vm/start-build-vm.sh for profile '$PROFILE'.
+# Do not hand-edit -- re-run the launcher. Layered over config/defaults.sh.
 #
+VM=$VMNAME
 VCPU=$VCPU
 MEM=\$(( $mem_gb * 1024 * 1024 ))
 SIZE=$SIZE
 EOF
-echo "Wrote $cfg (MEM=${mem_gb} GB, VCPU=${VCPU}, SIZE=${SIZE})"
+echo "Wrote $cfg (VM=$VMNAME, MEM=${mem_gb} GB, VCPU=${VCPU}, SIZE=${SIZE})"
 echo
 
 exec "$ENGVM_DIR/create.sh" "$CONFIG_NAME"
