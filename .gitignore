@@ -1,0 +1,32 @@
+# =====================================================================
+# oxide_computer workspace root .gitignore
+#
+# This root repo tracks workspace docs + the workspace Claude scaffold.
+# The nested upstream clones under src/ are SEPARATE git repos, each
+# downloaded individually (git clone) and tracked in their own remote.
+# They must NOT be tracked here.
+# =====================================================================
+
+# ---- Nested upstream clones (downloaded individually) ----
+/src/os/helios/
+/src/vm/helios-engvm/
+
+# ---- DEPRECATED flat clone, pending deletion (superseded by
+# ---- src/os/helios). Remove this line once the directory is gone. ----
+/helios/
+#
+# Adding a new clone? Clone it under src/<group>/<repo>/, then add its
+# path here, e.g.:
+#   /src/<group>/<repo>/
+
+# ---- Per-machine Claude settings (machine-specific paths/permissions) ----
+.claude/settings.local.json
+
+# ---- Editor / OS / misc ----
+*.log
+*.tmp
+*.swp
+.*.swp
+*~
+.DS_Store
+lost+found/
