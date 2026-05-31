@@ -37,13 +37,93 @@ HOST_RESERVE_GB="${HOST_RESERVE_GB:-8}"  # RAM left free for the desktop
 VCPU="${VCPU:-12}"                  # 32 threads here; build jobs = 2 + NCPUS
 SIZE="${SIZE:-200G}"               # qcow2 VIRTUAL ceiling (thin, grows on demand)
 DEFAULT_PROFILE="${OXIDE_VM_PROFILE:-dev}"
+DATA_VOL="${DATA_VOL:-helios-data}"  # persistent shared data volume (basename)
+DATA_SIZE="${DATA_SIZE:-200G}"      # its thin qcow2 ceiling
 # ----------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../config.sh"
 
 usage() {
-    sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^#\{0,1\} \{0,1\}//'
+    cat <<'EOT'
+start-build-vm.sh -- create/boot a named Helios build VM (sized from live host RAM).
+
+  start-build-vm.sh [profile]            create or boot VM helios-<profile> (default 'dev')
+  start-build-vm.sh --list               list existing helios-* VMs
+  start-build-vm.sh --set-ram <p> [GB]   resize an existing VM's RAM (shuts it down)
+  start-build-vm.sh --ensure-data <p> [SIZE]
+                                         create + attach the persistent shared data
+                                         disk to helios-<p> (survives VM recreate;
+                                         put a ZFS pool on it in the guest)
+  start-build-vm.sh --help
+
+  Env knobs: MIN_GB MAX_GB HOST_RESERVE_GB VCPU SIZE DATA_VOL DATA_SIZE OXIDE_VM_PROFILE
+EOT
+}
+
+# Echo the running helios-* domain (if any) that has block-device path $1
+# attached -- used to prevent two VMs importing the shared pool at once.
+running_domain_using() {
+    local path="$1" d
+    for d in $(virsh list --name --state-running 2>/dev/null | grep '^helios-'); do
+        if virsh domblklist "$d" --details 2>/dev/null | grep -qF "$path"; then
+            echo "$d"; return
+        fi
+    done
+}
+
+# Create (if missing) the persistent shared data volume and attach it to a
+# profile's VM as vdc. The volume is NOT named <vm>.qcow2, so destroy.sh
+# never deletes it -- it survives VM recreate. Refuses if another running
+# VM already holds it (a ZFS pool must not be imported twice). Idempotent.
+do_ensure_data() {
+    local prof="$1" size="${2:-$DATA_SIZE}" vm pool volname volpath state inuse
+    [ -n "$prof" ] || { echo "usage: $0 --ensure-data <profile> [SIZE]" >&2; exit 2; }
+    vm="helios-$prof"
+    virsh domstate "$vm" >/dev/null 2>&1 || {
+        echo "no such VM: $vm  (create it first: $0 $prof)" >&2; exit 1; }
+
+    pool=$( . "$ENGVM_DIR/config/defaults.sh" >/dev/null 2>&1; printf '%s' "${POOL:-default}" )
+    volname="${DATA_VOL}.qcow2"
+    if ! virsh vol-info --pool "$pool" "$volname" >/dev/null 2>&1; then
+        echo "creating shared persistent data volume $volname (${size}, thin qcow2) in pool '$pool'..."
+        virsh vol-create-as --pool "$pool" --capacity "$size" --format qcow2 --name "$volname"
+    fi
+    volpath=$(virsh vol-path --pool "$pool" "$volname")
+
+    inuse=$(running_domain_using "$volpath")
+    if [ -n "$inuse" ] && [ "$inuse" != "$vm" ]; then
+        echo "ERROR: data disk is attached to running VM '$inuse'." >&2
+        echo "Only one VM may use it at a time (shared ZFS pool would corrupt)." >&2
+        echo "Shut '$inuse' down first." >&2
+        exit 1
+    fi
+
+    if virsh domblklist "$vm" --details 2>/dev/null | grep -qF "$volpath"; then
+        echo "$vm already has the data disk: $volpath"
+    else
+        state=$(virsh domstate "$vm" 2>/dev/null || echo unknown)
+        echo "attaching $volpath to $vm as vdc ..."
+        if [ "$state" = "running" ]; then
+            virsh attach-disk "$vm" "$volpath" vdc --targetbus virtio --subdriver qcow2 --persistent
+        else
+            virsh attach-disk "$vm" "$volpath" vdc --targetbus virtio --subdriver qcow2 --config
+        fi
+    fi
+
+    cat <<EOT
+
+Done. In the guest, set up the pool ONCE (find <disk> with 'diskinfo'; the
+new virtio disk is likely c3t0d0):
+    pfexec zpool create data <disk>
+    pfexec zfs create data/helios          # then clone/build under /data/helios
+After a VM recreate, re-import instead of create:
+    pfexec zpool import data
+$volname is NOT deleted by destroy.sh, so it persists across VM recreate.
+Reach it from the host (while the VM runs) via sshfs/NFS. Push commits to a
+git remote too -- that's the real safety net.
+EOT
+    exit 0
 }
 
 # Available host RAM in whole GB (kernel's no-swap estimate).
@@ -149,7 +229,8 @@ case "${1:-}" in
         echo "Helios build VMs (libvirt domains named helios-*):"
         virsh list --all 2>/dev/null | awk 'NR<=2 || /helios-/'
         exit 0 ;;
-    -r|--set-ram) shift; do_set_ram "$@" ;;   # exits internally
+    -r|--set-ram) shift; do_set_ram "$@" ;;       # exits internally
+    --ensure-data) shift; do_ensure_data "$@" ;;  # exits internally
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
 esac
 
