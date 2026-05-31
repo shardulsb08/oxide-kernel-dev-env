@@ -25,15 +25,17 @@ Clones `oxidecomputer/helios-engvm` (drives the VM) and
 infra/scripts/vm/start-build-vm.sh           # profile 'dev' -> VM helios-dev
 ```
 
-This:
+This is **hands-off** -- no keystrokes. It:
 - sizes guest RAM from live host memory (clamped to `[8,16]` GB; ~12 GB typical),
 - gives the VM 12 vCPU and a 200 GB thin disk,
 - downloads the seed image on first run (~2.5 GB, once),
-- provisions a usable SSH key, then boots the guest.
+- provisions a usable SSH key,
+- **boots the guest headless**, waits for it to come up, then attaches the
+  persistent data disk and provisions the ZFS pool automatically,
+- prints how to connect when done.
 
-The guest prints its own SSH line during first boot. **Press `Ctrl+]`** to
-detach the console -- the launcher then attaches the persistent data disk
-and provisions the guest ZFS pool automatically.
+(Want to watch first boot? `virsh console helios-dev` in another terminal,
+`Ctrl+]` to detach -- optional, not required.)
 
 Multiple build images? Use profiles: `start-build-vm.sh test` ->
 `helios-test` (independent VM + root disk). `--list` shows them. Note only
@@ -42,12 +44,17 @@ one VM at a time may use the shared data pool.
 ## 3. Find and connect to the VM
 
 ```bash
-infra/scripts/vm/start-build-vm.sh --ip  dev    # print the VM's IP
-infra/scripts/vm/start-build-vm.sh --ssh dev    # SSH straight in
-# or manually:
-ssh "$(id -un)@$(infra/scripts/vm/start-build-vm.sh --ip dev)"
-# console instead of SSH:
-virsh console helios-dev                         # Ctrl+] to detach
+./ssh_connect.sh                # SSH into helios-dev (run in any terminal)
+./ssh_connect.sh dev 3          # open 3 terminals, each SSH'd in
+./ssh_connect.sh test           # SSH into the 'test' profile's VM
+```
+
+`ssh_connect.sh` resolves the VM's leased IP for you. Equivalent built-ins:
+
+```bash
+infra/scripts/vm/start-build-vm.sh --ssh dev      # SSH straight in
+infra/scripts/vm/start-build-vm.sh --ip  dev      # just print the IP
+infra/scripts/vm/start-build-vm.sh --console dev  # serial console (Ctrl+] to detach)
 ```
 
 ## 4. The persistent data disk

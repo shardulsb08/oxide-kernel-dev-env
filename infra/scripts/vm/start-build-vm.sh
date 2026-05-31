@@ -8,6 +8,7 @@
 #   start-build-vm.sh [profile]          create or boot VM helios-<profile> (default 'dev')
 #   start-build-vm.sh --list             list existing helios-* VMs
 #   start-build-vm.sh --ssh <profile>    SSH into the VM (resolves its IP)
+#   start-build-vm.sh --console <profile> attach the serial console (Ctrl+] to detach)
 #   start-build-vm.sh --ip  <profile>    print the VM's IP
 #   start-build-vm.sh --set-ram <p> [GB] resize an existing VM's RAM (shuts it down)
 #   start-build-vm.sh --ensure-data <p> [SIZE]   (just) create+attach the data disk
@@ -138,15 +139,54 @@ provision_data_pool() {  # run the guest setup script over SSH (idempotent)
         || echo "guest pool provisioning did not complete; see the getting-started guide."
 }
 
-print_connect_info() {
-    local vm="$1" ip; ip=$(get_ip "$vm")
-    echo
-    if [ -n "$ip" ]; then
-        echo "VM '$vm' is at $ip:   ssh $GUEST_USER@$ip      (or: $0 --ssh ${vm#helios-})"
-    else
-        echo "VM '$vm': IP not yet leased; try '$0 --ip ${vm#helios-}' shortly."
+# Wait until the guest has a leased IP and answers SSH; echo the IP. ~4 min.
+wait_guest_ready() {
+    local vm="$1" ip i=0
+    while [ "$i" -lt 80 ]; do
+        ip=$(get_ip "$vm")
+        if [ -n "$ip" ] && ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                -o ConnectTimeout=5 "$GUEST_USER@$ip" true 2>/dev/null; then
+            echo "$ip"; return 0
+        fi
+        sleep 3; i=$(( i + 1 ))
+    done
+    return 1
+}
+
+# Run engvm create.sh but suppress its final `virsh start --console`, so the
+# VM starts HEADLESS and control returns to us automatically -- no "press
+# Ctrl+]" step for the user. A throwaway PATH shim drops --console from the
+# start command; every other virsh call passes straight through to the real
+# binary. Watch first boot any time with `virsh console <vm>` if you want.
+run_create_headless() {
+    local shim real
+    real=$(command -v virsh)
+    shim=$(mktemp -d)
+    cat > "$shim/virsh" <<SH
+#!/bin/bash
+a=(); for x in "\$@"; do [ "\$x" = "--console" ] || a+=("\$x"); done
+exec "$real" "\${a[@]}"
+SH
+    chmod +x "$shim/virsh"
+    if ! PATH="$shim:$PATH" "$ENGVM_DIR/create.sh" "$CONFIG_NAME"; then
+        rm -rf "$shim"; return 1
     fi
-    echo "Console: virsh console $vm   (Ctrl+] to detach)"
+    rm -rf "$shim"
+}
+
+print_connect_info() {
+    local vm="$1" prof ip; prof=${vm#helios-}; ip=$(get_ip "$vm")
+    echo
+    echo "=================================================================="
+    if [ -n "$ip" ]; then
+        echo " VM '$vm' is ready at $ip"
+        echo "   connect:  ./ssh_connect.sh $prof        (or: ssh $GUEST_USER@$ip)"
+        echo "   console:  virsh console $vm             (Ctrl+] to detach)"
+    else
+        echo " VM '$vm' booted; IP not leased yet."
+        echo "   connect:  ./ssh_connect.sh $prof        (retry in a few seconds)"
+    fi
+    echo "=================================================================="
 }
 
 # CLI: resize an existing VM's RAM (shut off required to change max memory).
@@ -219,6 +259,8 @@ case "${1:-}" in
     --ssh) shift; [ -n "${1:-}" ] || { echo "usage: $0 --ssh <profile>" >&2; exit 2; }
            ip=$(get_ip "helios-$1"); [ -n "$ip" ] || { echo "no IP for helios-$1 (is it running?)" >&2; exit 1; }
            exec ssh -o StrictHostKeyChecking=accept-new "$GUEST_USER@$ip" ;;
+    --console) shift; [ -n "${1:-}" ] || { echo "usage: $0 --console <profile>" >&2; exit 2; }
+           exec virsh console "helios-$1" ;;
     -r|--set-ram)  shift; do_set_ram "$@" ;;       # exits internally
     --ensure-data) shift; do_ensure_data "$@" ;;   # exits internally
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -234,18 +276,19 @@ if [ ! -x "$ENGVM_DIR/create.sh" ]; then
     exit 1
 fi
 
-# --- Existing VM: attach data disk if needed, boot, provision, console ---
+# --- Existing VM: attach data disk if needed, boot headless, provision -----
 if virsh domstate "$VMNAME" >/dev/null 2>&1; then
     state=$(virsh domstate "$VMNAME" 2>/dev/null || echo unknown)
     echo "VM '$VMNAME' already exists (state: $state) -- booting it (not recreating)."
     if [ "$state" != "running" ]; then
         [ "$DATA_DISK" = 1 ] && { ensure_data_attach "$VMNAME" || true; }
         virsh start "$VMNAME" >/dev/null
+        echo "Waiting for the guest to accept SSH..."
+        wait_guest_ready "$VMNAME" >/dev/null || echo "warning: guest slow to come up." >&2
         [ "$PROVISION_GUEST" = 1 ] && provision_data_pool "$VMNAME"
     fi
     print_connect_info "$VMNAME"
-    echo "Attaching console..."
-    exec virsh console "$VMNAME"
+    exit 0
 fi
 
 echo "Creating new build VM '$VMNAME' (profile '$PROFILE')."
@@ -291,29 +334,26 @@ EOF
 echo "Wrote $cfg (VM=$VMNAME, MEM=${mem_gb} GB, VCPU=${VCPU}, SIZE=${SIZE})"
 
 ensure_vm_keys
-
-if [ "$DATA_DISK" = 1 ]; then
-    echo
-    echo ">>> The guest will first boot and print its SSH line. Press Ctrl+] to"
-    echo ">>> detach the console and let automated data-disk setup continue."
-fi
 echo
+echo "First-booting '$VMNAME' headless -- no keystrokes needed. This sets up the"
+echo "guest account + swap; watch it any time with 'virsh console $VMNAME'."
+run_create_headless || { echo "create.sh failed." >&2; exit 1; }
 
-# create.sh defines the domain and execs `virsh start --console`. Run it as a
-# CHILD (not exec) so control returns when you detach, letting us attach the
-# data disk and provision the pool.
-"$ENGVM_DIR/create.sh" "$CONFIG_NAME"
+echo "Waiting for the guest to finish first boot and accept SSH (a minute or two)..."
+if ! ip=$(wait_guest_ready "$VMNAME"); then
+    echo "Guest didn't become reachable in time. Inspect with: virsh console $VMNAME" >&2
+    print_connect_info "$VMNAME"; exit 0
+fi
+echo "Guest is up at $ip."
 
 if [ "$DATA_DISK" = 1 ]; then
-    echo
-    echo "Setting up the persistent data disk for $VMNAME ..."
-    if vm_ensure_off "$VMNAME"; then
-        if ensure_data_attach "$VMNAME"; then
-            virsh start "$VMNAME" >/dev/null
-            [ "$PROVISION_GUEST" = 1 ] && provision_data_pool "$VMNAME"
-        fi
+    echo "Attaching the persistent data disk (one quick reboot so the guest sees it)..."
+    if vm_ensure_off "$VMNAME" && ensure_data_attach "$VMNAME"; then
+        virsh start "$VMNAME" >/dev/null
+        wait_guest_ready "$VMNAME" >/dev/null || echo "warning: guest slow to return after reboot." >&2
+        [ "$PROVISION_GUEST" = 1 ] && provision_data_pool "$VMNAME"
     else
-        echo "warning: $VMNAME didn't shut down; attach later with: $0 --ensure-data $PROFILE" >&2
+        echo "warning: couldn't attach the data disk now; do it later with: $0 --ensure-data $PROFILE" >&2
     fi
 fi
 print_connect_info "$VMNAME"

@@ -119,10 +119,14 @@ Caveats:
 
 ### Finding and connecting to a VM
 
+The launcher boots VMs **headless** (no console keystroke needed) and prints
+how to connect when ready. To connect:
+
 ```
-$ infra/scripts/vm/start-build-vm.sh --ip  dev    # print the VM's IP (from DHCP leases)
+$ ./ssh_connect.sh [profile] [N]                  # root-level convenience; N opens N terminals
 $ infra/scripts/vm/start-build-vm.sh --ssh dev    # SSH straight in
-$ virsh console helios-dev                          # serial console (Ctrl+] to detach)
+$ infra/scripts/vm/start-build-vm.sh --ip  dev    # print the VM's IP (from DHCP leases)
+$ infra/scripts/vm/start-build-vm.sh --console dev # serial console (Ctrl+] to detach)
 ```
 
 ### SSH access
