@@ -10,15 +10,22 @@ This mirrors the `mpiric_kernel_dev_env/infra` pattern: a central
 `config.sh` locates the workspace and exports canonical paths, and the
 scripts source it instead of hard-coding absolute paths.
 
+**New here? See [GETTING_STARTED.md](GETTING_STARTED.md)** for the
+clone -> boot -> connect -> build walkthrough.
+
 ## Layout
 
 ```
 infra/
   README.md                this file
+  GETTING_STARTED.md       end-to-end walkthrough
   scripts/
     config.sh              workspace-root detection + path exports
+    bootstrap.sh           clone the upstream repos into src/
     vm/
-      start-build-vm.sh     launch the Helios build VM with dynamic RAM sizing
+      start-build-vm.sh     create/boot the build VM (RAM sizing, data disk, provisioning)
+      guest/
+        setup-data-pool.sh  runs IN the guest: import/create the ZFS data pool
 ```
 
 ## config.sh
@@ -70,41 +77,53 @@ domain has no hotplug slots), so this gracefully shuts the VM down, sets
 `maxmem`+`mem` persistently, and syncs the profile's generated config.
 Boot it again afterward with `start-build-vm.sh <profile>`.
 
-### Persistent data disk (survives VM recreate)
+### Persistent data disk (automatic; survives VM recreate)
 
 The build runs on the guest's local ZFS for speed, but a VM's root disk
-is wiped on `destroy.sh`/recreate. To keep your work, use a **separate
-persistent data disk**:
+is wiped on `destroy.sh`/recreate. So the launcher, **by default**,
+attaches a separate persistent data disk and provisions a ZFS pool on it:
+
+- A standalone `helios-data.qcow2` (NOT named `<vm>.qcow2`, so
+  `destroy.sh` never deletes it) is attached as `vdc`.
+- The guest script `guest/setup-data-pool.sh` runs over SSH to **import**
+  the `data` pool if it exists (the case after a recreate), or **create**
+  it on a single blank disk if not, make the `data/helios` dataset, and
+  clone Helios into `/data/helios`.
+- After a VM recreate the launcher reattaches the disk and re-imports the
+  pool automatically -- your work is intact.
+
+No flags needed -- it happens on create and on every boot. The
+`--ensure-data <profile> [SIZE]` subcommand just does the attach step on
+its own (e.g. to add the disk to a VM created with `DATA_DISK=0`).
 
 ```
-$ infra/scripts/vm/start-build-vm.sh --ensure-data dev          # 200G default
-$ infra/scripts/vm/start-build-vm.sh --ensure-data dev 300G     # explicit size
+$ infra/scripts/vm/start-build-vm.sh                 # data disk + pool: automatic
+$ DATA_DISK=0 infra/scripts/vm/start-build-vm.sh     # skip the data disk entirely
+$ PROVISION_GUEST=0 infra/scripts/vm/start-build-vm.sh  # attach disk, skip guest provisioning
+$ infra/scripts/vm/start-build-vm.sh --ensure-data dev 300G  # just (re)attach, 300G
 ```
-
-This creates a standalone `helios-data.qcow2` volume (NOT named
-`<vm>.qcow2`, so `destroy.sh` never deletes it) and attaches it to
-`helios-dev` as `vdc`. In the guest, put a ZFS pool on it once and work
-there:
-
-```
-# diskinfo                       # find the new disk (likely c3t0d0)
-# pfexec zpool create data c3t0d0
-# pfexec zfs create data/helios  # clone + build under /data/helios
-```
-
-After a VM recreate, the volume persists -- just `--ensure-data` again to
-reattach, then `pfexec zpool import data` in the guest. Reach the data
-from the host (while the VM runs) via sshfs/NFS.
 
 Caveats:
 - **One VM at a time.** A ZFS pool must not be imported by two running
-  VMs simultaneously (corruption). `--ensure-data` refuses to attach the
-  disk if another running `helios-*` VM already holds it.
+  VMs simultaneously (corruption). The launcher refuses to attach the
+  disk to a VM if another running `helios-*` VM already holds it.
+- **Conservative create.** The guest script only *creates* a pool when it
+  finds exactly one blank, large, non-root disk; otherwise it aborts and
+  asks you to create it by hand (it never guesses a disk).
 - **Git is the real safety net.** The disk protects WIP/build caches;
   push illumos-gate commits to a remote so published work can't be lost.
 - The volume lives in the libvirt `default` pool (`/`). For more room set
-  `DATA_VOL`/`DATA_SIZE` or relocate the pool to `/mnt/work_4gb` (see the
-  disk note above; non-default pool paths may need an AppArmor allow).
+  `DATA_VOL`/`DATA_SIZE`, or relocate the pool to `/mnt/work_4gb` (set
+  `POOL` in the profile config; non-default pool paths may need an
+  AppArmor allow).
+
+### Finding and connecting to a VM
+
+```
+$ infra/scripts/vm/start-build-vm.sh --ip  dev    # print the VM's IP (from DHCP leases)
+$ infra/scripts/vm/start-build-vm.sh --ssh dev    # SSH straight in
+$ virsh console helios-dev                          # serial console (Ctrl+] to detach)
+```
 
 ### SSH access
 
