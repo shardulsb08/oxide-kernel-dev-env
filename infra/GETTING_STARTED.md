@@ -147,8 +147,18 @@ infra/scripts/vm/build-helios.sh       # from the HOST: gmake illumos = build + 
 ./ssh_connect.sh
 cd /data/helios/helios
 ./helios-build onu -t my-change        # assemble a BE from the FRESH packages
-pfexec reboot                          # boots the new BE; you're running your kernel
+pfexec poweroff                        # clean shutdown -- do NOT use `reboot` (see below)
+# back on the HOST, cold-boot into the new BE:
+infra/scripts/vm/boot-with-log.sh      # (or start-build-vm.sh) -- full power-cycle
 ```
+
+**Use a cold boot (poweroff + start), NOT `pfexec reboot`, to switch BEs.**
+On x86, illumos `reboot` does a *fast reboot* (loads the next kernel
+directly, bypassing the firmware + loader); in this QEMU setup that wedges
+the guest (running but no console/network). A full power-cycle goes through
+the loader and boots the new BE cleanly. (Validated 2026-06-01:
+`pfexec reboot` -> wedge; `poweroff` + cold start -> booted the self-built
+`stlouis-0-g…` kernel fine.)
 
 After reboot, reconnect and check `uname -v` (should no longer be the seed
 `helios-3.0.23976`), then `dmesg | grep ...`.
