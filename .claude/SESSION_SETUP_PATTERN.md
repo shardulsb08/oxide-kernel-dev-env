@@ -67,6 +67,29 @@ Five sections, in order:
 5. **Codebase facts.** Build/run commands, architecture, constraints.
    The output of `/init`, trimmed.
 
+Keep these **repo-specific**. Cross-cutting *rules* that apply to every
+session -- the milestone context-maintenance cadence, upstream-clone
+hygiene, etc. -- do NOT go in each `CLAUDE.md`. They live once in the
+shared rules file (below), which every session is required to read.
+
+## Shared rules file (workspace root, auto-referred by every session)
+
+Abstract rules/constraints/considerations that apply broadly are stored
+**once** in the workspace-root `.claude/rules.md`, not duplicated across
+per-repo `CLAUDE.md` files. The workspace-root `CLAUDE.md` carries a
+standing instruction: *every session -- this root repo and every nested
+`src/` clone -- must read `.claude/rules.md` at the start.* Because the
+root `CLAUDE.md` auto-loads up the directory tree (Claude Code walks up
+from the cwd), that instruction reaches clone sessions too, so the
+shared rules are effectively always in context everywhere.
+
+Put a rule in `rules.md` when it is abstract and cross-cutting (applies
+regardless of which repo you're in). Keep a constraint in a specific
+`CLAUDE.md` when it is a fact about *that* repo. `rules.md` should mark
+which rules are universal vs. which apply only inside an `src/` clone
+(the root repo is exempt from clone-only rules, e.g. it *does* track its
+scaffold).
+
 ## Asymmetric loading rules
 
 | Class                    | Load when                       | Behavior                                         |
@@ -134,8 +157,10 @@ flip naive intuition. Skip for small/exploratory repos.
 ## Bootstrapping the pattern in a new `src/` clone
 
 1. Run `/init` (or assemble manually from the repo's README/Makefile).
-2. Insert the four pre-codebase sections (Task system, Design
-   principles, Auto-loaded references, Always-load).
+2. Insert the non-codebase sections (Task system, Design principles,
+   Auto-loaded references, Always-load) plus a "section 0" that points
+   to the workspace-root `.claude/rules.md` shared rules (don't restate
+   them) and notes the clone sits in the `oxide_computer` workspace.
 3. Write `.claude/principles/<aspect>.md` only for principles a real
    session has shown are needed -- never speculatively.
 4. Populate the trigger table.
