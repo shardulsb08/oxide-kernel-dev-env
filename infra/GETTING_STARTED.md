@@ -148,6 +148,37 @@ GitHub fork of illumos-gate**. The VM and even the data disk are
 replaceable; published commits are the durable record -- and a clean,
 reviewable commit/PR is the actual deliverable for the hiring goal.
 
+## 7. Kernel logging & debug prints
+
+illumos's `printk` family is **`cmn_err(9F)`** (and `dev_err(9F)` in
+drivers). The Linux mapping:
+
+| Linux            | illumos                       | Output prefix |
+|------------------|-------------------------------|---------------|
+| `pr_info`/`pr_notice` | `cmn_err(CE_NOTE, "...")` | `NOTICE:` |
+| `pr_warn`        | `cmn_err(CE_WARN, "...")`     | `WARNING:` |
+| `pr_cont`/plain  | `cmn_err(CE_CONT, "...")`     | (none)        |
+| `panic`          | `cmn_err(CE_PANIC, "...")` / `panic()` | panic |
+| driver-context   | `dev_err(dip, CE_WARN, ...)`  | includes the device |
+
+(`<sys/cmn_err.h>` is already included in most kernel files.)
+
+Reading the log -- the `dmesg` equivalents:
+
+```bash
+dmesg | tail                      # the kernel message buffer (like Linux dmesg)
+tail -f /var/adm/messages         # FOLLOW live  (your `dmesg -w`)
+```
+
+There's no `dmesg -c`; just note the timestamp, or truncate as root
+(`pfexec sh -c ': > /var/adm/messages'`). For non-invasive tracing of a
+running kernel, `dtrace`/`mdb` are usually better than adding prints.
+
+Quick round-trip to see a message: add `cmn_err(CE_NOTE, "kdev: hi from
+main()");` in `uts/common/os/main.c` (in `main()`, after the
+`ASSERT_STACK_ALIGNED();` line), rebuild that component, `onu -t kdev`,
+reboot, then `dmesg | grep kdev`.
+
 ## Other operations
 
 ```bash
