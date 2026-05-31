@@ -11,9 +11,6 @@
 /src/os/helios/
 /src/vm/helios-engvm/
 
-# ---- DEPRECATED flat clone, pending deletion (superseded by
-# ---- src/os/helios). Remove this line once the directory is gone. ----
-/helios/
 #
 # Adding a new clone? Clone it under src/<group>/<repo>/, then add its
 # path here, e.g.:
