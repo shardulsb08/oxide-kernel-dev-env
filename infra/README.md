@@ -25,6 +25,7 @@ infra/
     vm/
       start-build-vm.sh     create/boot the build VM (RAM sizing, data disk, provisioning)
       build-helios.sh       build illumos in a running VM (host wrapper; streams + logs)
+      test-kernel.sh        one command: rebuild+repackage -> onu -> cold-boot into new BE
       boot-with-log.sh      cold-start a VM with serial console attached + captured (boot debugging)
       guest/
         setup-data-pool.sh  runs IN the guest: import/create the ZFS data pool

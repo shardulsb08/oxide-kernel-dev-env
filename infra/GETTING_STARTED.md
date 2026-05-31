@@ -106,6 +106,21 @@ cd /data/helios/helios && gmake illumos      # or run build-helios.sh's steps
 
 ## 6. The kernel edit -> build -> test loop (Phase 1+)
 
+**One command for the whole cycle** (rebuild + repackage -> `onu` ->
+cold-boot into the new BE, console captured):
+
+```bash
+infra/scripts/vm/test-kernel.sh            # edit source first; run in a real terminal
+./ssh_connect.sh                           # after it boots, verify your change
+```
+
+The manual steps are below for understanding. **The #1 gotcha:** `onu`
+installs from the *package repo*, so you must **rebuild/repackage**
+(`build-helios.sh`, or `test-kernel.sh` which does it) after editing -- a
+bare `dmake install` only updates the proto area, and `onu` will then
+install a *stale* kernel without your change.
+
+
 The illumos source lives in the guest at
 `/data/helios/helios/projects/illumos/usr/src` (= `$SRC` inside bldenv):
 
