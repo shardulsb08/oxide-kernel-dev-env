@@ -117,8 +117,8 @@ The illumos source lives in the guest at
 | `uts/oxide/`   | the Oxide rack platform (real hardware) |
 | `cmd/`, `lib/` | userland commands and libraries |
 
-Iterate with the quick build environment (rebuilds only what changed --
-far faster than a full build):
+Compile-check a change fast with the quick build environment (rebuilds
+only what changed):
 
 ```bash
 ./ssh_connect.sh                       # into the guest
@@ -126,19 +126,35 @@ cd /data/helios/helios
 ./helios-build bldenv -q               # interactive build shell; drops you in $SRC
 
 # inside bldenv (pwd is .../usr/src):
-cd uts/i86pc/os                        # edit a kernel source file here, say
-dmake -S -m serial install             # build + stage into the proto area
-# or rebuild the whole kernel: cd uts && dmake install
+vi uts/common/os/main.c                # edit a kernel source file
+cd uts && dmake -S -m serial install   # build + stage into the PROTO area
+exit
 ```
 
-Test the change on the running guest:
+IMPORTANT: run `dmake` from **`uts/`** (or a module's build dir under
+`uts/intel` / `uts/i86pc`), NOT the leaf source dir -- `uts/common/os` has
+no `install` target.
+
+**`dmake install` only updates the proto area.** `onu` installs from the
+IPS package repo (`projects/illumos/packages/i386/nightly-nd`), which the
+`uts/` build does NOT refresh -- so repackage first, or `onu` installs a
+STALE build. The reliable way is to re-run the quick build (incremental
+rebuild AND repackage):
 
 ```bash
-# still in the helios repo (outside bldenv):
-./helios-build onu -t my-change        # build a new boot environment from your packages
-pfexec beadm activate my-change        # (if not auto-activated)
-pfexec reboot                          # boot into it; you're now running your kernel
+infra/scripts/vm/build-helios.sh       # from the HOST: gmake illumos = build + repackage
+# then, in the guest:
+./ssh_connect.sh
+cd /data/helios/helios
+./helios-build onu -t my-change        # assemble a BE from the FRESH packages
+pfexec reboot                          # boots the new BE; you're running your kernel
 ```
+
+After reboot, reconnect and check `uname -v` (should no longer be the seed
+`helios-3.0.23976`), then `dmesg | grep ...`. If the new BE won't
+boot/network, recover by selecting the previous BE at the loader
+(`virsh console helios-dev`), or destroy + recreate the VM (your work on
+`/data` survives).
 
 (`./helios-build onu --help` for options; the Helios README "Making
 changes" has the full walkthrough.)
