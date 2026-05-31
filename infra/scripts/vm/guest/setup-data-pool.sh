@@ -24,7 +24,8 @@ GUEST_USER="${GUEST_USER:-root}"
 
 if zpool list -H -o name "$POOL" >/dev/null 2>&1; then
     echo "pool '$POOL' already imported."
-elif zpool import "$POOL" >/dev/null 2>&1; then
+elif zpool import "$POOL" >/dev/null 2>&1 || zpool import -f "$POOL" >/dev/null 2>&1; then
+    # -f handles an unclean export (e.g. after the VM was force-destroyed).
     echo "imported existing pool '$POOL'."
 else
     rpdisk=$(zpool status rpool 2>/dev/null | awk '/c[0-9]+t[0-9]+d[0-9]+/{print $1; exit}')
