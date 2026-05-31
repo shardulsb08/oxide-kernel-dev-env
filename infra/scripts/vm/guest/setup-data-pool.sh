@@ -29,9 +29,11 @@ elif zpool import "$POOL" >/dev/null 2>&1; then
 else
     rpdisk=$(zpool status rpool 2>/dev/null | awk '/c[0-9]+t[0-9]+d[0-9]+/{print $1; exit}')
     cand=
-    for d in $(diskinfo -Hp 2>/dev/null | awk '{print $2}'); do
+    # diskinfo -Hp is TAB-separated; the PID column ("Block Device") contains a
+    # space, so split strictly on tabs: $2=disk, $5=size in bytes.
+    for d in $(diskinfo -Hp 2>/dev/null | awk -F'\t' '{print $2}'); do
         [ "$d" = "$rpdisk" ] && continue
-        sz=$(diskinfo -Hp 2>/dev/null | awk -v dd="$d" '$2==dd{print $5}')
+        sz=$(diskinfo -Hp 2>/dev/null | awk -F'\t' -v dd="$d" '$2==dd{print $5}')
         [ "${sz:-0}" -lt "$MIN_BYTES" ] && continue
         # Skip disks that already carry a ZFS label (belong to some pool).
         if zdb -l "/dev/dsk/${d}s0" 2>/dev/null | grep -q txg; then continue; fi
