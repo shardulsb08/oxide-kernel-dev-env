@@ -74,16 +74,55 @@ your work is intact.
 
 Opt out of the automatic disk/pool: `DATA_DISK=0` or `PROVISION_GUEST=0`.
 
-## 5. Build Helios (inside the guest -- Phase 1)
+## 5. Build illumos (Phase 1)
+
+One command from the host builds it inside the guest:
 
 ```bash
-ssh "$(id -un)@$(infra/scripts/vm/start-build-vm.sh --ip dev)"
-# in the guest:
-cd /data/helios
-gmake setup OXIDE_STAFF=no       # clone consolidations + build the tool (public path)
-gmake illumos                    # quick illumos build
-gmake bldenv                     # interactive incremental (dmake) build env
+infra/scripts/vm/build-helios.sh dev
 ```
+
+It SSHes into `helios-dev` and runs `guest/build-helios.sh`, which:
+1. installs build deps (`/developer/build-essential`, `/developer/illumos-tools`, Rust via rustup) if missing,
+2. clones Helios into `/data/helios/helios` if not already there,
+3. `gmake setup OXIDE_STAFF=no` -- clones the consolidations (illumos-gate
+   `stlouis`, omnios `helios3`, ...) and builds the `helios-build` tool (once),
+4. `gmake illumos` -- a quick illumos build.
+
+Output streams live and is teed to `infra/build-logs/build-dev.log` (gitignored).
+Artifacts land in the guest at `/data/helios/helios/projects/illumos/packages/i386`.
+
+This is long-running (tens of minutes to a couple of hours, depending on
+cores/disk/network -- `gmake setup` clones several GB). It's idempotent:
+re-run if SSH drops (setup is skipped once `./helios-build` exists). For a
+detach-proof run, do it inside `tmux` in the guest:
+
+```bash
+./ssh_connect.sh dev
+tmux new -s build
+cd /data/helios/helios && gmake illumos      # or run build-helios.sh's steps
+```
+
+## 6. The kernel edit -> build -> test loop (Phase 1+)
+
+For actual kernel changes, iterate inside the guest with the quick build
+environment (much faster than a full build):
+
+```bash
+cd /data/helios/helios
+gmake bldenv                                  # interactive quick build env (dmake)
+# inside bldenv:
+cd projects/illumos/usr/src/uts/<component>   # e.g. a kernel module/driver
+dmake -S -m serial install                    # build + stage to the proto area
+cd $SRC/pkg && dmake install                  # regenerate packages
+```
+
+Then apply the freshly built packages to the running guest and reboot to
+test (see the Helios README "Making changes" for `helios-build onu`
+specifics). Commit your illumos-gate work under
+`projects/illumos` and **push to your GitHub fork** -- that's the durable
+record (the VM and even the data disk are replaceable; published commits
+aren't).
 
 ## Other operations
 

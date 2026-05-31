@@ -27,3 +27,6 @@
 *~
 .DS_Store
 lost+found/
+
+# Host-side build logs (artifacts)
+/infra/build-logs/

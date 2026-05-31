@@ -24,8 +24,11 @@ infra/
     bootstrap.sh           clone the upstream repos into src/
     vm/
       start-build-vm.sh     create/boot the build VM (RAM sizing, data disk, provisioning)
+      build-helios.sh       build illumos in a running VM (host wrapper; streams + logs)
       guest/
         setup-data-pool.sh  runs IN the guest: import/create the ZFS data pool
+        build-helios.sh     runs IN the guest: deps + clone + gmake setup + gmake illumos
+  build-logs/               host-side build logs (gitignored)
 ```
 
 ## config.sh
