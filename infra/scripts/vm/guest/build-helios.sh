@@ -24,6 +24,20 @@ export PATH="$PATH:/usr/bin:/opt/ooce/bin:/opt/ooce/sbin:$HOME/.cargo/bin"
 
 echo "===== Helios build ($(uname -v)) -- work root $WORK ====="
 
+# FAST path: assume a prior full build; rebuild only changed kernel bits in
+# bldenv (dmake) and re-publish packages into $PKGARCHIVE (= the nightly-nd
+# repo onu reads). ~2x quicker than the full nightly. Kernel-focused: it
+# rebuilds $SRC/uts; for cmd/lib changes use a full build.
+if [ "${FAST:-0}" = 1 ]; then
+    cd "$REPO" 2>/dev/null || { echo "FAST: $REPO missing -- run a full build first." >&2; exit 1; }
+    [ -e ./helios-build ] || { echo "FAST: ./helios-build missing -- run a full build first." >&2; exit 1; }
+    echo "== FAST: bldenv dmake (uts) + repackage =="
+    printf 'cd $SRC/uts && dmake -m serial install && cd $SRC/pkg && dmake -m serial install\n' \
+        | ./helios-build bldenv -q
+    echo "== fast build complete -- packages refreshed under $REPO/projects/illumos/packages/i386 =="
+    exit 0
+fi
+
 # 1. Build dependencies (gmake/git/gcc via pkg; Rust via rustup).
 if ! command -v gmake >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
     echo "== installing /developer/build-essential + /developer/illumos-tools =="

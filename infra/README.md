@@ -27,6 +27,7 @@ infra/
       build-helios.sh       build illumos in a running VM (host wrapper; streams + logs)
       test-kernel.sh        one command: rebuild+repackage -> onu -> cold-boot into new BE
       boot-with-log.sh      cold-start a VM with serial console attached + captured (boot debugging)
+      mount-vm-fs.sh        sshfs-mount the guest /data on the host (ctags/cscope/editor)
       guest/
         setup-data-pool.sh  runs IN the guest: import/create the ZFS data pool
         build-helios.sh     runs IN the guest: deps + clone + gmake setup + gmake illumos

@@ -33,3 +33,6 @@ lost+found/
 
 # Serial-console boot logs (artifacts)
 /infra/serial-logs/
+
+# sshfs mountpoints for the build VMs
+/vm-mnt/

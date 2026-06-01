@@ -111,8 +111,14 @@ cold-boot into the new BE, console captured):
 
 ```bash
 infra/scripts/vm/test-kernel.sh            # edit source first; run in a real terminal
+infra/scripts/vm/test-kernel.sh --fast     # quick incremental rebuild (~2x faster, kernel-only)
 ./ssh_connect.sh                           # after it boots, verify your change
 ```
+
+`--fast` rebuilds only `$SRC/uts` via `bldenv`+`dmake` and re-publishes
+packages (instead of the full nightly) -- use it for kernel (`uts`)
+iterations once you've done one full build; use a full build for `cmd/`,
+`lib/`, or after big changes.
 
 The manual steps are below for understanding. **The #1 gotcha:** `onu`
 installs from the *package repo*, so you must **rebuild/repackage**
@@ -201,6 +207,23 @@ Preserve your work: commit under `projects/illumos` and **push to your
 GitHub fork of illumos-gate**. The VM and even the data disk are
 replaceable; published commits are the durable record -- and a clean,
 reviewable commit/PR is the actual deliverable for the hiring goal.
+
+## 6b. Host code navigation (sshfs + ctags/cscope)
+
+To browse/edit the in-guest illumos source with HOST tools, sshfs-mount the
+VM's `/data`:
+
+```bash
+infra/scripts/vm/mount-vm-fs.sh            # mount guest:/data -> vm-mnt/dev/
+cd vm-mnt/dev/helios/projects/illumos/usr/src
+/home/shardul/shortcuts/setup_code_navigation.sh    # ctags + cscope
+infra/scripts/vm/mount-vm-fs.sh --umount   # when done
+```
+
+Indexing the *whole* illumos tree over sshfs is slow (every file is read
+over SSH). For the full tree, prefer generating tags/cscope IN the guest
+(local, fast) and navigating over the mount, or point the indexer at a
+single subsystem dir (e.g. `uts/common/io/<driver>`).
 
 ## 7. Kernel logging & debug prints
 

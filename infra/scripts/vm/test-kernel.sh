@@ -6,6 +6,8 @@
 #   (3) cold-boot the VM into it, console captured  (boot-with-log.sh)
 #
 #   infra/scripts/vm/test-kernel.sh [profile]        (default 'dev')
+#   --fast     : quick incremental rebuild (bldenv dmake $SRC/uts + repackage,
+#                ~2x faster; kernel-focused; needs a prior full build)
 #   --no-build : skip step 1 (onu the CURRENT packages -- only useful if you
 #                already ran build-helios.sh; otherwise you'll boot a stale
 #                kernel without your change, which is the #1 gotcha)
@@ -24,10 +26,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../config.sh"
 
 build=1
+fast=0
 profile=""
 for a in "$@"; do
     case "$a" in
         --no-build) build=0 ;;
+        --fast) fast=1 ;;
         -*) echo "unknown option: $a" >&2; exit 2 ;;
         *) profile="$a" ;;
     esac
@@ -41,8 +45,13 @@ ip=$("$SCRIPT_DIR/start-build-vm.sh" --ip "$profile" 2>/dev/null || true)
 
 # 1. Rebuild + repackage (so onu installs your change, not a stale build).
 if [ "$build" = 1 ]; then
-    echo "==> [1/3] rebuild + repackage (build-helios.sh)"
-    "$SCRIPT_DIR/build-helios.sh" "$profile"
+    if [ "$fast" = 1 ]; then
+        echo "==> [1/3] FAST rebuild + repackage (build-helios.sh --fast)"
+        "$SCRIPT_DIR/build-helios.sh" --fast "$profile"
+    else
+        echo "==> [1/3] rebuild + repackage (build-helios.sh)"
+        "$SCRIPT_DIR/build-helios.sh" "$profile"
+    fi
 else
     echo "==> [1/3] skipped (--no-build); onu will use the CURRENT packages"
 fi
