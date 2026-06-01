@@ -39,8 +39,16 @@ if [ ! -w /data/zloop ] 2>/dev/null; then
 fi
 mkdir -p /data/zloop/cores
 cd /data/zloop
+# zloop calls /usr/bin/ztest by ABSOLUTE path, but ztest ships only in the
+# proto -- symlink it (system libzpool matches, since the OS is this build).
+[ -e /usr/bin/ztest ] || pfexec ln -s "\$P/usr/bin/ztest" /usr/bin/ztest
+# zloop runs 'sudo coreadm -e process' (to capture cores); on illumos shim
+# sudo -> pfexec so it works without a tty/password.
+mkdir -p /data/zloop/bin
+printf '#!/bin/sh\nexec pfexec "\$@"\n' > /data/zloop/bin/sudo
+chmod +x /data/zloop/bin/sudo
 nohup env \
-    PATH="\$P/usr/bin:\$P/usr/sbin:\$PATH" \
+    PATH="/data/zloop/bin:\$P/usr/bin:\$P/usr/sbin:\$PATH" \
     LD_LIBRARY_PATH_64="\$P/usr/lib/amd64:\$P/lib/amd64" \
     "\$P/usr/bin/zloop" -t $secs -f /data/zloop -c /data/zloop/cores \
     > /data/zloop/zloop.log 2>&1 &
