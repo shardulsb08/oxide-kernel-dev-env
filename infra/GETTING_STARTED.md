@@ -217,6 +217,14 @@ drivers). The Linux mapping:
 
 (`<sys/cmn_err.h>` is already included in most kernel files.)
 
+**Boot-ordering gotcha:** a `cmn_err()` near the top of `main()`
+(`uts/common/os/main.c`) runs *before* `main()` calls `startup()` (~line
+476), which is what initializes the message buffer `dmesg` reads. Such an
+early message shows on the **console** (and in `boot-with-log.sh`'s capture)
+but **not in `dmesg`**. Put the call *after* `startup()`, or in a module's
+`_init()`, to have it land in both. (Confirmed 2026-06-01: a `cmn_err` at
+main.c:455 printed to console but not `dmesg`.)
+
 Reading the log -- the `dmesg` equivalents:
 
 ```bash
