@@ -36,3 +36,6 @@ lost+found/
 
 # sshfs mountpoints for the build VMs
 /vm-mnt/
+
+# Personal strategy doc -- kept local, never published
+/docs/oxide-hireability.md
