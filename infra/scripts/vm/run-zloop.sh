@@ -28,9 +28,14 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$ip" "bash -s" <
 set -e
 P=/data/helios/helios/projects/illumos/proto/root_i386-nd
 [ -x "\$P/usr/bin/zloop" ] || { echo "zloop not built at \$P -- run a build first." >&2; exit 1; }
-if pgrep -f 'usr/bin/zloop' >/dev/null 2>&1; then
-    echo "zloop is already running (pid \$(pgrep -f 'usr/bin/zloop' | head -1)); not starting another."
+if pgrep -f '[u]sr/bin/zloop' >/dev/null 2>&1; then
+    echo "zloop is already running (pid \$(pgrep -f '[u]sr/bin/zloop' | head -1)); not starting another."
     exit 0
+fi
+# /data (pool root) is root-owned; create our dir and hand it to us once.
+if [ ! -w /data/zloop ] 2>/dev/null; then
+    pfexec mkdir -p /data/zloop/cores
+    pfexec chown -R "$user" /data/zloop
 fi
 mkdir -p /data/zloop/cores
 cd /data/zloop

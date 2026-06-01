@@ -20,7 +20,7 @@ ip=$("$SCRIPT_DIR/start-build-vm.sh" --ip "$profile" 2>/dev/null || true)
 [ -n "$ip" ] || { echo "VM helios-$profile not running." >&2; exit 1; }
 
 ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$ip" '
-echo "=== zloop process ==="; pgrep -fl "usr/bin/zloop" || echo "(not running)"
+echo "=== zloop process ==="; pgrep -fl "[u]sr/bin/zloop" || echo "(not running)"
 echo; echo "=== zloop.log (tail) ==="; tail -12 /data/zloop/zloop.log 2>/dev/null || echo "(no log yet)"
 echo; echo "=== crash dirs (each = a ztest failure to investigate) ==="
 ls -1 /data/zloop/cores/ 2>/dev/null | sed "s/^/  /" || true
